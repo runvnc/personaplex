@@ -93,15 +93,17 @@ class ServerState:
     text_tokenizer: sentencepiece.SentencePieceProcessor
     lm_gen: LMGen
     lock: asyncio.Lock
+    wait_for_user: bool
 
     def __init__(self, mimi: MimiModel, other_mimi: MimiModel, text_tokenizer: sentencepiece.SentencePieceProcessor,
                  lm: LMModel, device: str | torch.device, voice_prompt_dir: str | None = None,
-                 save_voice_prompt_embeddings: bool = False):
+                 save_voice_prompt_embeddings: bool = False, wait_for_user: bool = False):
         self.mimi = mimi
         self.other_mimi = other_mimi
         self.text_tokenizer = text_tokenizer
         self.device = device
         self.voice_prompt_dir = voice_prompt_dir
+        self.wait_for_user = wait_for_user
         self.frame_size = int(self.mimi.sample_rate / self.mimi.frame_rate)
         self.lm_gen = LMGen(lm,
                             audio_silence_frame_cnt=int(0.5 * self.mimi.frame_rate),
@@ -170,8 +172,13 @@ class ServerState:
         self.lm_gen.text_prompt_tokens = self.text_tokenizer.encode(wrap_with_system_tags(request.query["text_prompt"])) if len(request.query["text_prompt"]) > 0 else None
         seed = int(request["seed"]) if "seed" in request.query else None
 
+        wait_for_user = request.query.get("wait_for_user", str(self.wait_for_user)).lower() == "true"
+        vad_threshold = float(request.query.get("vad_threshold", "0.005"))
+        pending_instructions = []
+        pending_reset_prompt = None
+
         async def recv_loop():
-            nonlocal close
+            nonlocal close, pending_reset_prompt
             try:
                 async for message in ws:
                     if message.type == aiohttp.WSMsgType.ERROR:
@@ -195,6 +202,15 @@ class ServerState:
                     if kind == 1:  # audio
                         payload = message[1:]
                         opus_reader.append_bytes(payload)
+                    elif kind == 2:  # text instruction
+                        text = message[1:].decode('utf-8')
+                        clog.log("info", f"Received dynamic instruction: {text}")
+                        tokens = self.text_tokenizer.encode(wrap_with_system_tags(text))
+                        pending_instructions.extend(tokens)
+                    elif kind == 3:  # soft reset
+                        text = message[1:].decode('utf-8')
+                        clog.log("info", f"Received soft reset request: {text}")
+                        pending_reset_prompt = text
                     else:
                         clog.log("warning", f"unknown message kind {kind}")
             finally:
@@ -203,11 +219,36 @@ class ServerState:
 
         async def opus_loop():
             all_pcm_data = None
+            user_has_spoken = not wait_for_user
+            nonlocal pending_reset_prompt, user_has_spoken
 
             while True:
                 if close:
                     return
                 await asyncio.sleep(0.001)
+
+                if pending_reset_prompt is not None:
+                    clog.log("info", "Performing soft reset of model state...")
+                    self.lm_gen.text_prompt_tokens = self.text_tokenizer.encode(wrap_with_system_tags(pending_reset_prompt))
+                    self.mimi.reset_streaming()
+                    self.other_mimi.reset_streaming()
+                    self.lm_gen.reset_streaming()
+                    await self.lm_gen.step_system_prompts_async(self.mimi)
+                    pending_reset_prompt = None
+                    all_pcm_data = None
+                    user_has_spoken = not wait_for_user
+                    clog.log("info", "Soft reset complete.")
+                    continue
+
+                while pending_instructions:
+                    tok = pending_instructions.pop(0)
+                    tokens = self.lm_gen.step(
+                        moshi_tokens=self.lm_gen._encode_zero_frame(),
+                        text_token=tok,
+                        input_tokens=self.lm_gen._encode_sine_frame()
+                    )
+                    await asyncio.sleep(0)
+
                 pcm = opus_reader.read_pcm()
                 if pcm.shape[-1] == 0:
                     continue
@@ -219,12 +260,26 @@ class ServerState:
                     be = time.time()
                     chunk = all_pcm_data[: self.frame_size]
                     all_pcm_data = all_pcm_data[self.frame_size:]
+
+                    if not user_has_spoken:
+                        rms = np.sqrt(np.mean(chunk**2))
+                        if rms > vad_threshold:
+                            clog.log("info", f"User has spoken (RMS: {rms:.4f} > {vad_threshold}). Agent will now respond.")
+                            user_has_spoken = True
+
                     chunk = torch.from_numpy(chunk)
                     chunk = chunk.to(device=self.device)[None, None]
                     codes = self.mimi.encode(chunk)
                     _ = self.other_mimi.encode(chunk)
                     for c in range(codes.shape[-1]):
-                        tokens = self.lm_gen.step(codes[:, :, c: c + 1])
+                        if not user_has_spoken:
+                            tokens = self.lm_gen.step(
+                                codes[:, :, c: c + 1],
+                                moshi_tokens=self.lm_gen._encode_zero_frame(),
+                                text_token=self.lm_gen.zero_text_code
+                            )
+                        else:
+                            tokens = self.lm_gen.step(codes[:, :, c: c + 1])
                         if tokens is None:
                             continue
                         assert tokens.shape[1] == self.lm_gen.lm_model.dep_q + 1
@@ -390,6 +445,7 @@ def main():
             "that contains valid key.pem and cert.pem files"
         )
     )
+    parser.add_argument("--wait-for-user", action="store_true", help="Wait for user to speak before agent starts talking")
 
     args = parser.parse_args()
     args.voice_prompt_dir = _get_voice_prompt_dir(
@@ -453,6 +509,7 @@ def main():
         device=args.device,
         voice_prompt_dir=args.voice_prompt_dir,
         save_voice_prompt_embeddings=False,
+        wait_for_user=args.wait_for_user,
     )
     logger.info("warming up the model")
     state.warmup()

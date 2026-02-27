@@ -112,6 +112,7 @@ export const Conversation:FC<ConversationProps> = ({
   const textContainerRef = useRef<HTMLDivElement>(null);
   const textSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
   const audioSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
+  const [instructionText, setInstructionText] = useState("");
 
   const WSURL = buildURL({
     workerAddr,
@@ -232,6 +233,32 @@ export const Conversation:FC<ConversationProps> = ({
     }
   }, [isOver, socketStatus]);
 
+  const sendInstruction = useCallback(() => {
+    if (!instructionText.trim() || socketStatus !== "connected") return;
+    
+    const textEncoder = new TextEncoder();
+    const textBytes = textEncoder.encode(instructionText);
+    const message = new Uint8Array(1 + textBytes.length);
+    message[0] = 2; // kind = 2 for text instruction
+    message.set(textBytes, 1);
+    
+    sendMessage(message);
+    setInstructionText("");
+  }, [instructionText, socketStatus, sendMessage]);
+
+  const sendSoftReset = useCallback(() => {
+    if (!instructionText.trim() || socketStatus !== "connected") return;
+    
+    const textEncoder = new TextEncoder();
+    const textBytes = textEncoder.encode(instructionText);
+    const message = new Uint8Array(1 + textBytes.length);
+    message[0] = 3; // kind = 3 for soft reset
+    message.set(textBytes, 1);
+    
+    sendMessage(message);
+    setInstructionText("");
+  }, [instructionText, socketStatus, sendMessage]);
+
   return (
     <SocketContext.Provider
       value={{
@@ -251,6 +278,25 @@ export const Conversation:FC<ConversationProps> = ({
           </Button>
           <div className={`h-4 w-4 rounded-full ${socketColor}`} />
         </div>
+        
+        <div className="flex justify-center items-center gap-2 mt-4">
+          <input 
+            type="text" 
+            value={instructionText}
+            onChange={(e) => setInstructionText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && sendInstruction()}
+            placeholder="Inject instruction (e.g. 'Ask about budget')"
+            className="px-3 py-2 border rounded-md w-full max-w-md text-black"
+            disabled={socketStatus !== "connected"}
+          />
+          <Button onClick={sendInstruction} disabled={socketStatus !== "connected" || !instructionText.trim()}>
+            Inject
+          </Button>
+          <Button onClick={sendSoftReset} disabled={socketStatus !== "connected" || !instructionText.trim()}>
+            Soft Reset
+          </Button>
+        </div>
+
         {audioContext.current && worklet.current && <MediaContext.Provider value={
           {
             startRecording,
