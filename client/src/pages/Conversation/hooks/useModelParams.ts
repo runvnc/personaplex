@@ -11,6 +11,7 @@ export const DEFAULT_REPETITION_PENALTY = 1.0;
 export const DEFAULT_TEXT_PROMPT = "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.";
 export const DEFAULT_VOICE_PROMPT = "NATF0.pt";
 export const DEFAULT_RANDOM_SEED = -1;
+export const DEFAULT_OUTBOUND_REMINDER = "";
 
 export type ModelParamsValues = {
   textTemperature: number;
@@ -23,6 +24,7 @@ export type ModelParamsValues = {
   textPrompt: string;
   voicePrompt: string;
   randomSeed: number;
+  outboundReminder: string;
 };
 
 type useModelParamsArgs = Partial<ModelParamsValues>;
@@ -39,6 +41,7 @@ export const useModelParams = (params?:useModelParamsArgs) => {
   const [textPrompt, setTextPromptBase] = useState(params?.textPrompt || DEFAULT_TEXT_PROMPT);
   const [voicePrompt, setVoicePromptBase] = useState(params?.voicePrompt || DEFAULT_VOICE_PROMPT);
   const [randomSeed, setRandomSeedBase] = useLocalStorage('randomSeed', params?.randomSeed || DEFAULT_RANDOM_SEED);
+  const [outboundReminder, setOutboundReminderBase] = useState(params?.outboundReminder || DEFAULT_OUTBOUND_REMINDER);
 
   const resetParams = useCallback(() => {
     setTextTemperatureBase(DEFAULT_TEXT_TEMPERATURE);
@@ -48,6 +51,7 @@ export const useModelParams = (params?:useModelParamsArgs) => {
     setPadMultBase(DEFAULT_PAD_MULT);
     setRepetitionPenalty(DEFAULT_REPETITION_PENALTY);
     setRepetitionPenaltyContext(DEFAULT_REPETITION_PENALTY_CONTEXT);
+    setOutboundReminderBase(DEFAULT_OUTBOUND_REMINDER);
   }, [
     setTextTemperatureBase,
     setTextTopkBase,
@@ -56,6 +60,7 @@ export const useModelParams = (params?:useModelParamsArgs) => {
     setPadMultBase,
     setRepetitionPenaltyBase,
     setRepetitionPenaltyContextBase,
+    setOutboundReminderBase,
   ]);
 
   const setParams = useCallback((params: ModelParamsValues) => {
@@ -69,6 +74,7 @@ export const useModelParams = (params?:useModelParamsArgs) => {
     setTextPromptBase(params.textPrompt);
     setVoicePromptBase(params.voicePrompt);
     setRandomSeedBase(params.randomSeed);
+    setOutboundReminderBase(params.outboundReminder);
   }, [
     setTextTemperatureBase,
     setTextTopkBase,
@@ -80,6 +86,7 @@ export const useModelParams = (params?:useModelParamsArgs) => {
     setTextPromptBase,
     setVoicePromptBase,
     setRandomSeedBase,
+    setOutboundReminderBase,
   ]);
 
   const setTextTemperature = useCallback((value: number) => {
@@ -126,6 +133,9 @@ export const useModelParams = (params?:useModelParamsArgs) => {
   const setRandomSeed = useCallback((value: number) => {
     setRandomSeedBase(value);
   }, []);
+  const setOutboundReminder = useCallback((value: string) => {
+    setOutboundReminderBase(value);
+  }, []);
 
   return {
     textTemperature,
@@ -150,5 +160,7 @@ export const useModelParams = (params?:useModelParamsArgs) => {
     setParams,
     randomSeed,
     setRandomSeed,
+    outboundReminder,
+    setOutboundReminder,
   }
 }

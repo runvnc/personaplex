@@ -20,10 +20,12 @@ export const ModelParams:FC<ModelParamsProps> = ({
   textPrompt,
   voicePrompt,
   randomSeed,
+  outboundReminder,
   modal,
 }) => {
   const [modalVoicePrompt, setModalVoicePrompt] = useState<string>(voicePrompt);
   const [modalTextPrompt, setModalTextPrompt] = useState<string>(textPrompt);
+  const [modalOutboundReminder, setModalOutboundReminder] = useState<string>(outboundReminder);
   return (
     <div className=" p-2 mt-6 self-center flex flex-col items-center text-center">
         <table>
@@ -32,6 +34,11 @@ export const ModelParams:FC<ModelParamsProps> = ({
               <td>Text Prompt:</td>
               <td className="w-12 text-center">{modalTextPrompt}</td>
               <td className="p-2"><input className="align-middle bg-white text-black border border-gray-300 rounded px-2 py-1" disabled={isConnected} type="text" id="text-prompt" name="text-prompt" value={modalTextPrompt} onChange={e => setModalTextPrompt(e.target.value)} /></td>
+            </tr>
+            <tr>
+              <td>Outbound Reminder:</td>
+              <td className="w-12 text-center">{modalOutboundReminder}</td>
+              <td className="p-2"><input className="align-middle bg-white text-black border border-gray-300 rounded px-2 py-1" disabled={isConnected} type="text" id="outbound-reminder" name="outbound-reminder" value={modalOutboundReminder} onChange={e => setModalOutboundReminder(e.target.value)} placeholder="Auto-injected when user speaks" /></td>
             </tr>
             <tr>
               <td>Voice Prompt:</td>
@@ -75,6 +82,7 @@ export const ModelParams:FC<ModelParamsProps> = ({
             repetitionPenaltyContext,
             textPrompt: modalTextPrompt,
             voicePrompt: modalVoicePrompt,
+            outboundReminder: modalOutboundReminder,
             randomSeed,
           });
           modal?.current?.close()
