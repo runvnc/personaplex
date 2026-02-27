@@ -223,6 +223,16 @@ class ServerState:
             user_has_spoken = not wait_for_user
             nonlocal pending_reset_prompt
 
+            async def process_pending_instructions():
+                while pending_instructions:
+                    tok = pending_instructions.pop(0)
+                    self.lm_gen.step(
+                        moshi_tokens=self.lm_gen._encode_zero_frame(),
+                        text_token=tok,
+                        input_tokens=self.lm_gen._encode_sine_frame()
+                    )
+                    await asyncio.sleep(0)
+
             while True:
                 if close:
                     return
@@ -241,14 +251,7 @@ class ServerState:
                     clog.log("info", "Soft reset complete.")
                     continue
 
-                while pending_instructions:
-                    tok = pending_instructions.pop(0)
-                    tokens = self.lm_gen.step(
-                        moshi_tokens=self.lm_gen._encode_zero_frame(),
-                        text_token=tok,
-                        input_tokens=self.lm_gen._encode_sine_frame()
-                    )
-                    await asyncio.sleep(0)
+                await process_pending_instructions()
 
                 pcm = opus_reader.read_pcm()
                 if pcm.shape[-1] == 0:
@@ -271,6 +274,7 @@ class ServerState:
                                 clog.log("info", f"Auto-injecting outbound reminder: {outbound_reminder}")
                                 tokens = self.text_tokenizer.encode(wrap_with_system_tags(outbound_reminder))
                                 pending_instructions.extend(tokens)
+                                await process_pending_instructions()
 
                     chunk = torch.from_numpy(chunk)
                     chunk = chunk.to(device=self.device)[None, None]
