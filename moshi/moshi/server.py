@@ -208,7 +208,7 @@ class ServerState:
                         clog.log("info", f"Received dynamic instruction: {text}")
                         tokens = self.text_tokenizer.encode(wrap_with_system_tags(text))
                         pending_instructions.extend(tokens)
-                    elif kind == 3:  # soft reset
+                    elif kind == 7:  # soft reset
                         text = message[1:].decode('utf-8')
                         clog.log("info", f"Received soft reset request: {text}")
                         pending_reset_prompt = text

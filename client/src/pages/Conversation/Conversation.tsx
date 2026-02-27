@@ -237,26 +237,14 @@ export const Conversation:FC<ConversationProps> = ({
   const sendInstruction = useCallback(() => {
     if (!instructionText.trim() || socketStatus !== "connected") return;
     
-    const textEncoder = new TextEncoder();
-    const textBytes = textEncoder.encode(instructionText);
-    const message = new Uint8Array(1 + textBytes.length);
-    message[0] = 2; // kind = 2 for text instruction
-    message.set(textBytes, 1);
-    
-    sendMessage(message);
+    sendMessage({ type: "text", data: instructionText });
     setInstructionText("");
   }, [instructionText, socketStatus, sendMessage]);
 
   const sendSoftReset = useCallback(() => {
     if (!instructionText.trim() || socketStatus !== "connected") return;
     
-    const textEncoder = new TextEncoder();
-    const textBytes = textEncoder.encode(instructionText);
-    const message = new Uint8Array(1 + textBytes.length);
-    message[0] = 3; // kind = 3 for soft reset
-    message.set(textBytes, 1);
-    
-    sendMessage(message);
+    sendMessage({ type: "reset", data: instructionText });
     setInstructionText("");
   }, [instructionText, socketStatus, sendMessage]);
 
