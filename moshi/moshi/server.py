@@ -174,6 +174,7 @@ class ServerState:
 
         wait_for_user = request.query.get("wait_for_user", str(self.wait_for_user)).lower() == "true"
         vad_threshold = float(request.query.get("vad_threshold", "0.005"))
+        outbound_reminder = request.query.get("outbound_reminder", "")
         pending_instructions = []
         pending_reset_prompt = None
 
@@ -266,6 +267,10 @@ class ServerState:
                         if rms > vad_threshold:
                             clog.log("info", f"User has spoken (RMS: {rms:.4f} > {vad_threshold}). Agent will now respond.")
                             user_has_spoken = True
+                            if outbound_reminder:
+                                clog.log("info", f"Auto-injecting outbound reminder: {outbound_reminder}")
+                                tokens = self.text_tokenizer.encode(wrap_with_system_tags(outbound_reminder))
+                                pending_instructions.extend(tokens)
 
                     chunk = torch.from_numpy(chunk)
                     chunk = chunk.to(device=self.device)[None, None]
