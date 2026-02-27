@@ -220,7 +220,7 @@ class ServerState:
         async def opus_loop():
             all_pcm_data = None
             user_has_spoken = not wait_for_user
-            nonlocal pending_reset_prompt, user_has_spoken
+            nonlocal pending_reset_prompt
 
             while True:
                 if close:
