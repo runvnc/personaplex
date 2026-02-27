@@ -41,6 +41,8 @@ interface HomepageProps {
   setTextPrompt: (value: string) => void;
   voicePrompt: string;
   setVoicePrompt: (value: string) => void;
+  outboundReminder: string;
+  setOutboundReminder: (value: string) => void;
 }
 
 const Homepage = ({
@@ -50,6 +52,8 @@ const Homepage = ({
   setTextPrompt,
   voicePrompt,
   setVoicePrompt,
+  outboundReminder,
+  setOutboundReminder,
 }: HomepageProps) => {
   return (
     <div className="text-center h-screen w-screen p-4 flex flex-col items-center pt-8">
@@ -91,6 +95,21 @@ const Homepage = ({
           <div className="text-right text-xs text-gray-500 mt-1">
             {textPrompt.length}/1000
           </div>
+        </div>
+
+        <div className="w-full">
+          <label htmlFor="outbound-reminder" className="block text-left text-base font-medium text-gray-700 mb-2">
+            Outbound Reminder (Auto-injected when user speaks):
+          </label>
+          <textarea
+            id="outbound-reminder"
+            name="outbound-reminder"
+            value={outboundReminder}
+            onChange={(e) => setOutboundReminder(e.target.value)}
+            className="w-full h-16 min-h-[40px] max-h-32 p-3 bg-white text-black border border-gray-300 rounded resize-y focus:outline-none focus:ring-2 focus:ring-[#76b900] focus:border-transparent"
+            placeholder="e.g. The user just answered. YOU called THEM. Introduce yourself."
+            maxLength={500}
+          />
         </div>
 
         <div className="w-full">
@@ -209,6 +228,8 @@ export const Queue:FC = () => {
           setTextPrompt={modelParams.setTextPrompt}
           voicePrompt={modelParams.voicePrompt}
           setVoicePrompt={modelParams.setVoicePrompt}
+          outboundReminder={modelParams.outboundReminder}
+          setOutboundReminder={modelParams.setOutboundReminder}
         />
       )}
     </>
