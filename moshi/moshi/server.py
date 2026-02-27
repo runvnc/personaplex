@@ -220,7 +220,9 @@ class ServerState:
 
         async def opus_loop():
             all_pcm_data = None
-            user_has_spoken = not wait_for_user
+            user_has_started_speaking = False
+            user_has_finished_speaking = not wait_for_user
+            silence_frames = 0
             nonlocal pending_reset_prompt
 
             async def process_pending_instructions():
@@ -265,23 +267,29 @@ class ServerState:
                     chunk = all_pcm_data[: self.frame_size]
                     all_pcm_data = all_pcm_data[self.frame_size:]
 
-                    if not user_has_spoken:
+                    if not user_has_finished_speaking:
                         rms = np.sqrt(np.mean(chunk**2))
                         if rms > vad_threshold:
-                            clog.log("info", f"User has spoken (RMS: {rms:.4f} > {vad_threshold}). Agent will now respond.")
-                            user_has_spoken = True
-                            if outbound_reminder:
-                                clog.log("info", f"Auto-injecting outbound reminder: {outbound_reminder}")
-                                tokens = self.text_tokenizer.encode(wrap_with_system_tags(outbound_reminder))
-                                pending_instructions.extend(tokens)
-                                await process_pending_instructions()
+                            user_has_started_speaking = True
+                            silence_frames = 0
+                        elif user_has_started_speaking:
+                            silence_frames += 1
+                            # Wait for ~0.6 seconds of silence (8 frames at 12.5Hz)
+                            if silence_frames > 8:
+                                clog.log("info", "User has finished initial greeting. Agent will now respond.")
+                                user_has_finished_speaking = True
+                                if outbound_reminder:
+                                    clog.log("info", f"Auto-injecting outbound reminder: {outbound_reminder}")
+                                    tokens = self.text_tokenizer.encode(wrap_with_system_tags(outbound_reminder))
+                                    pending_instructions.extend(tokens)
+                                    await process_pending_instructions()
 
                     chunk = torch.from_numpy(chunk)
                     chunk = chunk.to(device=self.device)[None, None]
                     codes = self.mimi.encode(chunk)
                     _ = self.other_mimi.encode(chunk)
                     for c in range(codes.shape[-1]):
-                        if not user_has_spoken:
+                        if not user_has_finished_speaking:
                             tokens = self.lm_gen.step(
                                 codes[:, :, c: c + 1],
                                 moshi_tokens=self.lm_gen._encode_zero_frame(),
