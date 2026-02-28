@@ -422,11 +422,18 @@ def get_lora_moshi(
     if lora_weights is not None:
         assert _is_safetensors(lora_weights), "LoRA weights must be a safetensors file."
         lora_state_dict = load_file(lora_weights, device=str(device))
+        
+        new_state_dict = {}
         for key, value in lora_state_dict.items():
+            # Translate new Kyutai keys (in_projs.0) back to PersonaPlex keys (in_proj)
+            key = key.replace('.in_projs.0.', '.in_proj.')
+            key = key.replace('.out_projs.0.', '.out_proj.')
+            
             if value.dtype.is_floating_point:
                 value = value.to(dtype=dtype)
-            lora_state_dict[key] = value
-        res = model.load_state_dict(lora_state_dict, strict=False, assign=True)
+            new_state_dict[key] = value
+            
+        res = model.load_state_dict(new_state_dict, strict=False, assign=True)
         if res.unexpected_keys:
             raise RuntimeError(
                 f"unexpected_keys in the lora weights: {res.unexpected_keys}"
