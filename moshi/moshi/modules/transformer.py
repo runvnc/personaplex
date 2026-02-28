@@ -359,10 +359,10 @@ class StreamingMultiheadAttention(StreamingModule[_MHAState]):
         self.weights_per_step = weights_per_step
         if weights_per_step:
             mult = weights_per_step
-        in_proj = nn.Linear(embed_dim, mult * out_dim, bias=False, **factory_kwargs)
+        self.in_proj = nn.Linear(embed_dim, mult * out_dim, bias=False, **factory_kwargs)
         # We try to follow the default PyTorch MHA convention, to easily compare results.
-        self.in_proj_weight = in_proj.weight
-        self.in_proj_bias = in_proj.bias
+        self.in_proj_weight = self.in_proj.weight
+        self.in_proj_bias = self.in_proj.bias
         self.out_proj = nn.Linear(
             embed_dim, mult * embed_dim, bias=False, **factory_kwargs
         )
@@ -377,9 +377,9 @@ class StreamingMultiheadAttention(StreamingModule[_MHAState]):
                 )
         else:
             capacity = self.context
-        device = self.in_proj_weight.device
+        device = self.in_proj.weight.device
         # TODO: the following estimation will not work great with FSDP.
-        dtype = self.in_proj_weight.dtype
+        dtype = self.in_proj.weight.dtype
         dim_per_head = self.embed_dim // self.num_heads
         kv_cache = RingKVCache(
             batch_size, self.num_heads, dim_per_head, capacity, device, dtype
@@ -411,10 +411,10 @@ class StreamingMultiheadAttention(StreamingModule[_MHAState]):
 
         if self.weights_per_step:
             projected = multi_linear(
-                self.weights_per_step, self.in_proj_weight, query, offset_cpu
+                self.weights_per_step, self.in_proj.weight, query, offset_cpu
             )
         else:
-            projected = nn.functional.linear(query, self.in_proj_weight)
+            projected = self.in_proj(query)
         q, k, v = rearrange(
             projected, "b t (p h d) -> p b h t d", p=3, h=self.num_heads
         )

@@ -35,6 +35,7 @@ from .compression import MimiModel
 from .lm import LMModel
 from ..modules import SEANetEncoder, SEANetDecoder, transformer
 from ..quantization import SplitResidualVectorQuantizer
+from ..modules.lora import replace_all_linear_with_lora, replace_lora_with_linear
 
 SAMPLE_RATE = 24000
 FRAME_RATE = 12.5
@@ -168,6 +169,8 @@ def get_moshi_lm(
     copy_missing_weights: bool = True,
     device: torch.device | str = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    lora_weights: str | Path | None = None,
+    fuse_lora: bool = False,
     delays=None,
     cpu_offload: bool = False,
 ) -> LMModel:
@@ -195,7 +198,8 @@ def get_moshi_lm(
 
     # Init with meta device to avoid init dummy memory
     init_device = "meta" if filename is not None else device
-    model = LMModel(device=init_device, dtype=dtype, **lm_kwargs)
+    model = LMModel(device=init_device, dtype=dtype,
+            lora_weights=self.lora_weights, **lm_kwargs)
     if filename is None:
         model.to(device=device, dtype=dtype)
         model.eval()
@@ -256,6 +260,24 @@ def get_moshi_lm(
         state_dict[key] = state_dict[key].to(device=dev, dtype=dtype)
     
     model.load_state_dict(state_dict, strict=False, assign=True)
+    
+    if lora:
+        assert not lm_kwargs.get("quantize"), (
+            "LoRA and quantization are incompatible for now."
+        )
+        model = get_lora_moshi(
+            model=model,
+            lora_rank=lora_rank,
+            lora_scaling=lora_scaling,
+            lora_weights=lora_weights,
+            device=device,
+            dtype=dtype,
+            fuse_lora=fuse_lora,
+        )
+    else:
+        assert lora_weights is None, (
+            "`lora` is False, but received some lora_weights to load."
+        )
     model.eval()
     return model.to(device=device, dtype=dtype)
 
@@ -285,7 +307,8 @@ def _get_moshi_lm_with_offload(
     logger.info("Loading model with CPU offloading enabled")
 
     # First, create model on CPU to get the architecture
-    model = LMModel(device="cpu", dtype=dtype, **lm_kwargs)
+    model = LMModel(device="cpu", dtype=dtype,
+            lora_weights=self.lora_weights, **lm_kwargs)
 
     # Load state_dict to CPU
     if filename.endswith(".safetensors"):
@@ -346,6 +369,7 @@ def _get_moshi_lm_with_offload(
         max_memory=None,  # Let accelerate auto-detect available memory
         no_split_module_classes=["StreamingTransformerLayer"],
         dtype=dtype,
+            lora_weights=self.lora_weights,
     )
 
     # Log the device distribution
@@ -360,5 +384,54 @@ def _get_moshi_lm_with_offload(
         offload_dir="offload_weights",  # Directory for disk offload if needed
     )
 
+    
+    if lora:
+        assert not lm_kwargs.get("quantize"), (
+            "LoRA and quantization are incompatible for now."
+        )
+        model = get_lora_moshi(
+            model=model,
+            lora_rank=lora_rank,
+            lora_scaling=lora_scaling,
+            lora_weights=lora_weights,
+            device=device,
+            dtype=dtype,
+            fuse_lora=fuse_lora,
+        )
+    else:
+        assert lora_weights is None, (
+            "`lora` is False, but received some lora_weights to load."
+        )
     model.eval()
+    return model
+
+
+def get_lora_moshi(
+    model: LMModel,
+    lora_weights: str | Path | None,
+    lora_rank: int,
+    lora_scaling: float,
+    dtype: torch.dtype = torch.bfloat16,
+    device: torch.device | str = "cpu",
+    fuse_lora: bool = True,
+) -> LMModel:
+    init_device = device
+    if lora_weights is not None:
+        init_device = torch.device('meta')
+    replace_all_linear_with_lora(model, lora_rank, lora_scaling, device=init_device)
+    if lora_weights is not None:
+        assert _is_safetensors(lora_weights), "LoRA weights must be a safetensors file."
+        lora_state_dict = load_file(lora_weights, device=str(device))
+        for key, value in lora_state_dict.items():
+            if value.dtype.is_floating_point:
+                value = value.to(dtype=dtype)
+            lora_state_dict[key] = value
+        res = model.load_state_dict(lora_state_dict, strict=False, assign=True)
+        if res.unexpected_keys:
+            raise RuntimeError(
+                f"unexpected_keys in the lora weights: {res.unexpected_keys}"
+            )
+        model = model.to(dtype=dtype, device=device)
+        if fuse_lora:
+            replace_lora_with_linear(model)
     return model
