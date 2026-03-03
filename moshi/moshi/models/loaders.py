@@ -199,7 +199,7 @@ def get_moshi_lm(
     # Init with meta device to avoid init dummy memory
     init_device = "meta" if filename is not None else device
     model = LMModel(device=init_device, dtype=dtype,
-            lora_weights=self.lora_weights, **lm_kwargs)
+            **lm_kwargs)
     if filename is None:
         model.to(device=device, dtype=dtype)
         model.eval()
@@ -261,23 +261,6 @@ def get_moshi_lm(
     
     model.load_state_dict(state_dict, strict=False, assign=True)
     
-    if lora:
-        assert not lm_kwargs.get("quantize"), (
-            "LoRA and quantization are incompatible for now."
-        )
-        model = get_lora_moshi(
-            model=model,
-            lora_rank=lora_rank,
-            lora_scaling=lora_scaling,
-            lora_weights=lora_weights,
-            device=device,
-            dtype=dtype,
-            fuse_lora=fuse_lora,
-        )
-    else:
-        assert lora_weights is None, (
-            "`lora` is False, but received some lora_weights to load."
-        )
     model.eval()
     return model.to(device=device, dtype=dtype)
 
@@ -308,7 +291,7 @@ def _get_moshi_lm_with_offload(
 
     # First, create model on CPU to get the architecture
     model = LMModel(device="cpu", dtype=dtype,
-            lora_weights=self.lora_weights, **lm_kwargs)
+            **lm_kwargs)
 
     # Load state_dict to CPU
     if filename.endswith(".safetensors"):
@@ -369,7 +352,6 @@ def _get_moshi_lm_with_offload(
         max_memory=None,  # Let accelerate auto-detect available memory
         no_split_module_classes=["StreamingTransformerLayer"],
         dtype=dtype,
-            lora_weights=self.lora_weights,
     )
 
     # Log the device distribution
