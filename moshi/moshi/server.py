@@ -439,6 +439,8 @@ def main():
     parser.add_argument("--moshi-weight", type=str, help="Path to a local checkpoint file for Moshi.")
     parser.add_argument("--lora-weight", type=str, help="Path to a local checkpoint file for LoRA.", default=None)
     parser.add_argument("--no_fuse_lora", action="store_false", dest="fuse_lora", default=True, help="Do not fuse LoRA weights into the base model.")
+    parser.add_argument("--lora-rank", type=int, default=32, help="LoRA rank used during training (default: 32).")
+    parser.add_argument("--lora-scaling", type=float, default=2.0, help="LoRA scaling used during training (default: 2.0).")
     parser.add_argument("--mimi-weight", type=str, help="Path to a local checkpoint file for Mimi.")
     parser.add_argument("--hf-repo", type=str, default=loaders.DEFAULT_REPO,
                         help="HF repo to look into, defaults PersonaPlex. "
@@ -518,6 +520,16 @@ def main():
     if args.moshi_weight is None:
         args.moshi_weight = hf_hub_download(args.hf_repo, loaders.MOSHI_NAME)
     lm = loaders.get_moshi_lm(args.moshi_weight, device=args.device, cpu_offload=args.cpu_offload)
+    if args.lora_weight:
+        logger.info(f"loading lora weights from {args.lora_weight}")
+        lm = loaders.get_lora_moshi(
+            lm,
+            lora_weights=args.lora_weight,
+            lora_rank=args.lora_rank,
+            lora_scaling=args.lora_scaling,
+            device=args.device,
+            fuse_lora=args.fuse_lora,
+        )
     lm.eval()
     logger.info("moshi loaded")
     state = ServerState(
