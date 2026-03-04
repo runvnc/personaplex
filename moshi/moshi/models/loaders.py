@@ -408,15 +408,45 @@ def get_lora_moshi(
         assert _is_safetensors(lora_weights), "LoRA weights must be a safetensors file."
         lora_state_dict = load_file(lora_weights, device=str(device))
         
-        new_state_dict = {}
+        # The upstream kyutai moshi stores weights_per_step attention as a ModuleList
+        # of N separate linears: in_projs.0 ... in_projs.N-1, each [out/N, rank].
+        # PersonaPlex stores it as one fused linear: in_proj [out, rank] = stack of all N.
+        # We need to detect all in_projs.N keys, stack them in order, and store as in_proj.
+        import re
+        import collections
+
+        # Group in_projs.N and out_projs.N keys by their prefix
+        projs_groups = collections.defaultdict(dict)  # prefix -> {N: (lora_part, tensor)}
+        regular_keys = {}
         for key, value in lora_state_dict.items():
-            # Translate new Kyutai keys (in_projs.0) back to PersonaPlex keys (in_proj)
-            key = key.replace('.in_projs.0.', '.in_proj.')
-            key = key.replace('.out_projs.0.', '.out_proj.')
-            
-            if value.dtype.is_floating_point:
-                value = value.to(dtype=dtype)
+            m = re.match(r"^(.*)\.in_projs\.([0-9]+)\.(.+)$", key)
+            if m:
+                prefix, idx, suffix = m.group(1), int(m.group(2)), m.group(3)
+                projs_groups[(prefix, "in", suffix)][idx] = value
+                continue
+            m = re.match(r"^(.*)\.out_projs\.([0-9]+)\.(.+)$", key)
+            if m:
+                prefix, idx, suffix = m.group(1), int(m.group(2)), m.group(3)
+                projs_groups[(prefix, "out", suffix)][idx] = value
+                continue
+            regular_keys[key] = value
+
+        new_state_dict = {}
+        # Stack grouped projs into fused tensors
+        for (prefix, direction, suffix), idx_map in projs_groups.items():
+            sorted_tensors = [idx_map[i] for i in sorted(idx_map.keys())]
+            fused = torch.cat(sorted_tensors, dim=0)  # stack along out_features dim
+            proj_name = "in_proj" if direction == "in" else "out_proj"
+            new_key = f"{prefix}.{proj_name}.{suffix}"
+            new_state_dict[new_key] = fused
+
+        for key, value in regular_keys.items():
             new_state_dict[key] = value
+
+        # Cast to target dtype
+        for key in list(new_state_dict.keys()):
+            if new_state_dict[key].dtype.is_floating_point:
+                new_state_dict[key] = new_state_dict[key].to(dtype=dtype)
             
         res = model.load_state_dict(new_state_dict, strict=False, assign=True)
         if res.unexpected_keys:
