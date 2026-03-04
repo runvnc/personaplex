@@ -131,17 +131,23 @@ def _is_safetensors(path: Path | str) -> bool:
 
 
 def _fuse_in_projs(state_dict):
-    """Translate upstream in_projs.N keys into fused in_proj.
+    """Translate upstream self_attn weight key formats into personaplex in_proj.weight format.
 
-    The base model checkpoint uses the upstream kyutai format where
-    weights_per_step attention is stored as a ModuleList of N separate linears:
-        *.self_attn.in_projs.0.weight  shape [out/N, in]
-    PersonaPlex inference expects a single fused linear:
-        *.self_attn.in_proj.weight     shape [N*out/N, in]
+    Handles two upstream formats:
+    1. PyTorch native MHA: *.self_attn.in_proj_weight -> *.self_attn.in_proj.weight
+    2. ModuleList format:  *.self_attn.in_projs.N.weight (stacked) -> *.self_attn.in_proj.weight
     """
     projs_groups = collections.defaultdict(dict)
-    regular_keys = {}
+    new_sd = {}
     for key, value in state_dict.items():
+        # Format 1: PyTorch native MHA flat weight (in_proj_weight, no dot before weight)
+        m = re.match(r"^(.*\.self_attn)\.in_proj_weight$", key)
+        if m:
+            new_key = m.group(1) + ".in_proj.weight"
+            print("Renaming", key, "->", new_key)
+            new_sd[new_key] = value
+            continue
+        # Format 2: ModuleList in_projs.N.weight
         m = re.match(r"^(.*)\.in_projs\.([0-9]+)\.weight$", key)
         if m:
             projs_groups[(m.group(1), "in")][int(m.group(2))] = value
@@ -150,8 +156,8 @@ def _fuse_in_projs(state_dict):
         if m:
             projs_groups[(m.group(1), "out")][int(m.group(2))] = value
             continue
-        regular_keys[key] = value
-    new_sd = dict(regular_keys)
+        new_sd[key] = value
+    # Stack ModuleList groups
     for (prefix, direction), idx_map in projs_groups.items():
         tensors = [idx_map[i] for i in sorted(idx_map.keys())]
         fused = torch.cat(tensors, dim=0)
