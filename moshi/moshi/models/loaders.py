@@ -260,9 +260,12 @@ def get_moshi_lm(
         state_dict[key] = state_dict[key].to(device=dev, dtype=dtype)
     
     model.load_state_dict(state_dict, strict=False, assign=True)
-    
+
     model.eval()
-    return model.to(device=device, dtype=dtype)
+    # NOTE: do NOT call model.to() here - assign=True already placed tensors on
+    # the correct device. Calling .to() would fail on any meta tensors left behind
+    # for keys not present in state_dict (e.g. in_proj weights filled later by LoRA).
+    return model
 
 
 def _get_moshi_lm_with_offload(
