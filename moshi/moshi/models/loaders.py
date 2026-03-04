@@ -295,7 +295,7 @@ def get_moshi_lm(
                 if replaced:
                     break
             if not replaced:
-                print("Missing %s", name)
+                print(f"Missing {name}")
 
     # Assign weights to target device
     dev = torch.device(device) if isinstance(device, str) else device
@@ -497,10 +497,27 @@ def get_lora_moshi(
                 new_state_dict[key] = new_state_dict[key].to(dtype=dtype)
             
         res = model.load_state_dict(new_state_dict, strict=False, assign=True)
+
+        # Diagnostics: show what was and wasn't consumed by LoRA loading.
+        if res.missing_keys:
+            logger.info(f"LoRA load_state_dict missing_keys count: {len(res.missing_keys)}")
         if res.unexpected_keys:
             raise RuntimeError(
                 f"unexpected_keys in the lora weights: {res.unexpected_keys}"
             )
+
+        # Hard failure for important LoRA misses only (base frozen_W misses are expected).
+        lora_missing = [
+            k for k in res.missing_keys
+            if k.endswith("lora_A.weight") or k.endswith("lora_B.weight")
+        ]
+        if lora_missing:
+            preview = lora_missing[:20]
+            raise RuntimeError(
+                "Missing required LoRA tensors while loading adapters. "
+                f"count={len(lora_missing)} preview={preview}"
+            )
+
         # NOTE: do NOT call model.to() - assign=True already placed tensors on device.
         # Remaining meta tensors for in_proj frozen_W will be handled separately.
         if fuse_lora:

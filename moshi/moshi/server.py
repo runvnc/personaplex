@@ -530,6 +530,10 @@ def main():
             device=args.device,
             fuse_lora=args.fuse_lora,
         )
+        lora_modules = sum(1 for _name, m in lm.named_modules() if m.__class__.__name__ == "LoRALinear")
+        logger.info(
+            f"LoRA verification: lora_weight_set={bool(args.lora_weight)} fuse_lora={args.fuse_lora} lora_module_count={lora_modules}"
+        )
     lm.eval()
     logger.info("moshi loaded")
     state = ServerState(
