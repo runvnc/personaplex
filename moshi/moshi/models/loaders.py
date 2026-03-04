@@ -458,7 +458,8 @@ def get_lora_moshi(
             raise RuntimeError(
                 f"unexpected_keys in the lora weights: {res.unexpected_keys}"
             )
-        model = model.to(dtype=dtype, device=device)
+        # NOTE: do NOT call model.to() - assign=True already placed tensors on device.
+        # Remaining meta tensors for in_proj frozen_W will be handled separately.
         if fuse_lora:
             replace_lora_with_linear(model)
     return model
