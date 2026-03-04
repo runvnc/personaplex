@@ -25,6 +25,8 @@
 """Retrieves the pretrained models for Moshi and Mimi."""
 from pathlib import Path
 import logging
+import re
+import collections
 
 from safetensors.torch import load_model, load_file
 import torch
@@ -127,6 +129,38 @@ def _is_safetensors(path: Path | str) -> bool:
     return Path(path).suffix in (".safetensors", ".sft", ".sfts")
 
 
+
+def _fuse_in_projs(state_dict):
+    """Translate upstream in_projs.N keys into fused in_proj.
+
+    The base model checkpoint uses the upstream kyutai format where
+    weights_per_step attention is stored as a ModuleList of N separate linears:
+        *.self_attn.in_projs.0.weight  shape [out/N, in]
+    PersonaPlex inference expects a single fused linear:
+        *.self_attn.in_proj.weight     shape [N*out/N, in]
+    """
+    projs_groups = collections.defaultdict(dict)
+    regular_keys = {}
+    for key, value in state_dict.items():
+        m = re.match(r"^(.*)\.in_projs\.([0-9]+)\.weight$", key)
+        if m:
+            projs_groups[(m.group(1), "in")][int(m.group(2))] = value
+            continue
+        m = re.match(r"^(.*)\.out_projs\.([0-9]+)\.weight$", key)
+        if m:
+            projs_groups[(m.group(1), "out")][int(m.group(2))] = value
+            continue
+        regular_keys[key] = value
+    new_sd = dict(regular_keys)
+    for (prefix, direction), idx_map in projs_groups.items():
+        tensors = [idx_map[i] for i in sorted(idx_map.keys())]
+        fused = torch.cat(tensors, dim=0)
+        proj_name = "in_proj" if direction == "in" else "out_proj"
+        new_key = f"{prefix}.{proj_name}.weight"
+        print("Fusing", prefix, "(", len(tensors), "steps) ->", new_key, list(fused.shape))
+        new_sd[new_key] = fused
+    return new_sd
+
 def get_mimi(filename: str | Path,
              device: torch.device | str = 'cpu') -> MimiModel:
     """Return a pretrained Mimi model."""
@@ -219,6 +253,9 @@ def get_moshi_lm(
         # torch checkpoint
         with open(filename, "rb") as f:
             state_dict = torch.load(f, map_location="cpu")
+    # Patch 0: fuse in_projs.N -> in_proj (upstream format -> personaplex format)
+    state_dict = _fuse_in_projs(state_dict)
+
     # Patch 1: expand depformer self_attn weights if needed
     model_sd = model.state_dict()
     for name, tensor in list(state_dict.items()):
