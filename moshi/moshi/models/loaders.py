@@ -435,7 +435,12 @@ def get_lora_moshi(
         # Stack grouped projs into fused tensors
         for (prefix, direction, suffix), idx_map in projs_groups.items():
             sorted_tensors = [idx_map[i] for i in sorted(idx_map.keys())]
-            fused = torch.cat(sorted_tensors, dim=0)  # stack along out_features dim
+            # lora_B: stack along dim=0 (out_features) to form fused projection
+            # lora_A: all steps share the same down-projection, just take index 0
+            if suffix == 'lora_A.weight':
+                fused = sorted_tensors[0]  # [rank, in_features] - same for all steps
+            else:
+                fused = torch.cat(sorted_tensors, dim=0)  # lora_B: stack [N*out, rank]
             proj_name = "in_proj" if direction == "in" else "out_proj"
             new_key = f"{prefix}.{proj_name}.{suffix}"
             new_state_dict[new_key] = fused
