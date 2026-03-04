@@ -26,17 +26,22 @@ def replace_lora_with_linear(module):
     """Recursively replace all LoRALinear layers with Linear layers."""
     for name, child in module.named_children():
         if isinstance(child, LoRALinear):
-            # Compute merged weights: W' = W + scaling * B @ A
-            merged_weight = child.frozen_W.weight.data + \
-                child.scaling * (child.lora_B.weight @ child.lora_A.weight)
-            # Create a standard Linear layer with the same in/out features
+            # Compute the LoRA delta: scaling * B @ A
+            lora_delta = child.scaling * (child.lora_B.weight @ child.lora_A.weight)
+            # If frozen_W is on meta device (base weights missing from checkpoint),
+            # treat it as zeros - the LoRA weights ARE the full weight for this layer.
+            if child.frozen_W.weight.device.type == 'meta':
+                merged_weight = lora_delta
+            else:
+                merged_weight = child.frozen_W.weight.data + lora_delta
+            # Create a standard Linear layer with merged weights
             new_linear = nn.Linear(child.frozen_W.in_features,
                                    child.frozen_W.out_features, bias=False,
                                    device=torch.device('meta'),
                                    dtype=merged_weight.dtype)
             new_linear.weight = nn.Parameter(
-                merged_weight, requires_grad=merged_weight.requires_grad)  # Transfer merged weights
-            setattr(module, name, new_linear)  # Replace the module
+                merged_weight, requires_grad=merged_weight.requires_grad)
+            setattr(module, name, new_linear)
         else:
             replace_lora_with_linear(child)  # Recursively process submodules
 
@@ -103,7 +108,8 @@ class LoRALinear(nn.Module):
 
             weight = up_weight.mm(down_weight) * self.scaling
 
-            weight += self.frozen_W.weight
+            if self.frozen_W.weight.device.type != 'meta':
+                weight += self.frozen_W.weight
         return weight
 
     @property
@@ -119,6 +125,9 @@ class LoRALinear(nn.Module):
 
     def forward(self, x: torch.Tensor):
         lora = self.lora_B(self.lora_A(x))
+        if self.frozen_W.weight.device.type == 'meta':
+            # Base weights missing from checkpoint; LoRA is the full weight
+            return lora * self.scaling
         return self.frozen_W(x) + lora * self.scaling
 
     def __repr__(self) -> str:
