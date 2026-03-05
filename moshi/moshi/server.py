@@ -188,18 +188,23 @@ class ServerState:
         initial_guidance_injected = False
 
         async def _inject_initial_guidance(reason: str, user_started: bool):
-            # Helper: step with a text token, decode audio, and send it so the model
-            # stream stays fully consistent (text + audio both committed).
+            # Helper: step with a text token paired with real user audio codes.
+            # We cycle through buffered_user_codes so the model gets real audio
+            # context alongside the injected text, preventing it from trying to
+            # re-speak the injected phrase as its own audio output.
+            code_idx = [0]  # mutable counter for cycling through buffered codes
+
             async def _step_and_send(tok, is_user_stream: bool):
-                if is_user_stream:
-                    # Simulated user speech: user audio = sine, moshi = silence
+                if buffered_user_codes and is_user_stream:
+                    # Use real buffered user audio, cycling if needed
+                    user_code = buffered_user_codes[code_idx[0] % len(buffered_user_codes)]
+                    code_idx[0] += 1
                     tokens = self.lm_gen.step(
-                        input_tokens=self.lm_gen._encode_sine_frame(),
+                        input_tokens=user_code,
                         moshi_tokens=self.lm_gen._encode_zero_frame(),
                         text_token=torch.tensor([tok], device=self.device),
                     )
                 else:
-                    # Agent/system context: user audio = sine, moshi = silence
                     tokens = self.lm_gen.step(
                         input_tokens=self.lm_gen._encode_sine_frame(),
                         moshi_tokens=self.lm_gen._encode_zero_frame(),
@@ -207,9 +212,7 @@ class ServerState:
                     )
                 if tokens is None:
                     return
-                # Decode and discard the audio output so mimi internal state stays
-                # in sync, but do NOT send it to the caller (it is injected context,
-                # not real speech the caller should hear).
+                # Decode to keep mimi state in sync but do not send to caller.
                 _ = self.mimi.decode(tokens[:, 1:9])
                 _ = self.other_mimi.decode(tokens[:, 1:9])
 
@@ -275,6 +278,7 @@ class ServerState:
             user_has_started_speaking = False
             user_has_finished_speaking = not wait_for_user
             silence_frames = 0
+            buffered_user_codes = []  # stores encoded user audio frames during wait period
             nonlocal pending_reset_prompt, initial_guidance_injected
 
             async def process_pending_instructions():
@@ -359,13 +363,13 @@ class ServerState:
                     _ = self.other_mimi.encode(chunk)
                     for c in range(codes.shape[-1]):
                         if not user_has_finished_speaking:
-                            # Feed silence to the model during the wait period so the
-                            # model does not hear the real user audio yet. After VAD
-                            # unlock we inject the simulated greeting text instead.
+                            # Buffer the user audio codes so we can replay them
+                            # alongside injected text tokens after VAD unlock.
+                            buffered_user_codes.append(codes[:, :, c: c + 1].clone())
                             tokens = self.lm_gen.step(
-                                input_tokens=self.lm_gen._encode_sine_frame(),
+                                codes[:, :, c: c + 1],
                                 moshi_tokens=self.lm_gen._encode_zero_frame(),
-                                text_token=self.lm_gen.zero_text_code,
+                                text_token=self.lm_gen.zero_text_code
                             )
                         else:
                             tokens = self.lm_gen.step(codes[:, :, c: c + 1])
