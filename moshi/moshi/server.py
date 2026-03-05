@@ -257,10 +257,14 @@ class ServerState:
                 _ = self.other_mimi.decode(tokens[:, 1:9])
 
             if simulated_user_greeting and user_started:
-                sim = f'The user has just answered the call and said: "{simulated_user_greeting}". Respond naturally as the caller and continue your outbound script.'
+                # Encode just the short phrase for audio-paired injection so text
+                # token count roughly matches the audio frames we have.
+                # Then inject a longer context string WITHOUT audio pairing so the
+                # model understands the situation.
                 clog.log("info", f"Auto-injecting simulated user greeting ({reason}): {simulated_user_greeting}")
-                tokens = self.text_tokenizer.encode(wrap_with_system_tags(sim))
-                for tok in tokens:
+                phrase_tokens = self.text_tokenizer.encode(simulated_user_greeting)
+                clog.log("info", f"[inject] phrase token count={len(phrase_tokens)} audio_frames={len(self.simulated_greeting_audio_codes) if self.simulated_greeting_audio_codes else 0}")
+                for tok in phrase_tokens:
                     await _step_and_send(tok, is_user_stream=True)
             if initial_agent_utterance:
                 clog.log("info", f"Auto-injecting initial agent utterance ({reason}): {initial_agent_utterance}")
