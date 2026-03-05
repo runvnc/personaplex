@@ -184,6 +184,24 @@ class ServerState:
         simulated_user_greeting = request.query.get("simulated_user_greeting", self.simulated_user_greeting)
         pending_instructions = []
         pending_reset_prompt = None
+        connection_started_at = time.time()
+        initial_guidance_injected = False
+
+        async def _inject_initial_guidance(reason: str, user_started: bool):
+            if simulated_user_greeting and user_started:
+                sim = f'The user has just answered the call and said: "{simulated_user_greeting}". Respond naturally as the caller and continue your outbound script.'
+                clog.log("info", f"Auto-injecting simulated user greeting ({reason}): {simulated_user_greeting}")
+                tokens = self.text_tokenizer.encode(wrap_with_system_tags(sim))
+                pending_instructions.extend(tokens)
+            if initial_agent_utterance:
+                clog.log("info", f"Auto-injecting initial agent utterance ({reason}): {initial_agent_utterance}")
+                tokens = self.text_tokenizer.encode(wrap_with_system_tags(initial_agent_utterance))
+                pending_instructions.extend(tokens)
+            if outbound_reminder:
+                clog.log("info", f"Auto-injecting outbound reminder ({reason}): {outbound_reminder}")
+                tokens = self.text_tokenizer.encode(wrap_with_system_tags(outbound_reminder))
+                pending_instructions.extend(tokens)
+            await process_pending_instructions()
 
         async def recv_loop():
             nonlocal close, pending_reset_prompt
