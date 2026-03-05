@@ -188,26 +188,47 @@ class ServerState:
         initial_guidance_injected = False
 
         async def _inject_initial_guidance(reason: str, user_started: bool):
+            # Helper: step with a text token, decode audio, and send it so the model
+            # stream stays fully consistent (text + audio both committed).
+            async def _step_and_send(tok, is_user_stream: bool):
+                if is_user_stream:
+                    # Simulated user speech: user audio = sine, moshi = silence
+                    tokens = self.lm_gen.step(
+                        input_tokens=self.lm_gen._encode_sine_frame(),
+                        moshi_tokens=self.lm_gen._encode_zero_frame(),
+                        text_token=torch.tensor([tok], device=self.device),
+                    )
+                else:
+                    # Agent/system context: user audio = sine, moshi = silence
+                    tokens = self.lm_gen.step(
+                        input_tokens=self.lm_gen._encode_sine_frame(),
+                        moshi_tokens=self.lm_gen._encode_zero_frame(),
+                        text_token=torch.tensor([tok], device=self.device),
+                    )
+                if tokens is None:
+                    return
+                # Decode and discard the audio output so mimi internal state stays
+                # in sync, but do NOT send it to the caller (it is injected context,
+                # not real speech the caller should hear).
+                _ = self.mimi.decode(tokens[:, 1:9])
+                _ = self.other_mimi.decode(tokens[:, 1:9])
+
             if simulated_user_greeting and user_started:
                 sim = f'The user has just answered the call and said: "{simulated_user_greeting}". Respond naturally as the caller and continue your outbound script.'
                 clog.log("info", f"Auto-injecting simulated user greeting ({reason}): {simulated_user_greeting}")
                 tokens = self.text_tokenizer.encode(wrap_with_system_tags(sim))
-                pending_instructions.extend(tokens)
+                for tok in tokens:
+                    await _step_and_send(tok, is_user_stream=True)
             if initial_agent_utterance:
                 clog.log("info", f"Auto-injecting initial agent utterance ({reason}): {initial_agent_utterance}")
                 tokens = self.text_tokenizer.encode(wrap_with_system_tags(initial_agent_utterance))
-                pending_instructions.extend(tokens)
+                for tok in tokens:
+                    await _step_and_send(tok, is_user_stream=False)
             if outbound_reminder:
                 clog.log("info", f"Auto-injecting outbound reminder ({reason}): {outbound_reminder}")
                 tokens = self.text_tokenizer.encode(wrap_with_system_tags(outbound_reminder))
-                pending_instructions.extend(tokens)
-            while pending_instructions:
-                    tok = pending_instructions.pop(0)
-                    self.lm_gen.step(
-                        self.lm_gen._encode_zero_frame(),
-                        self.lm_gen._encode_zero_frame(),
-                        text_token=torch.tensor([tok], device=self.device),
-                    )
+                for tok in tokens:
+                    await _step_and_send(tok, is_user_stream=False)
 
         async def recv_loop():
             nonlocal close, pending_reset_prompt
@@ -286,11 +307,14 @@ class ServerState:
 
                 while pending_instructions:
                     tok = pending_instructions.pop(0)
-                    self.lm_gen.step(
-                        self.lm_gen._encode_zero_frame(),
-                        self.lm_gen._encode_zero_frame(),
+                    _ptokens = self.lm_gen.step(
+                        input_tokens=self.lm_gen._encode_sine_frame(),
+                        moshi_tokens=self.lm_gen._encode_zero_frame(),
                         text_token=torch.tensor([tok], device=self.device),
                     )
+                    if _ptokens is not None:
+                        _ = self.mimi.decode(_ptokens[:, 1:9])
+                        _ = self.other_mimi.decode(_ptokens[:, 1:9])
 
                 pcm = opus_reader.read_pcm()
                 if pcm.shape[-1] == 0:
