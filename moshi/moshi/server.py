@@ -248,7 +248,7 @@ class ServerState:
             user_has_started_speaking = False
             user_has_finished_speaking = not wait_for_user
             silence_frames = 0
-            nonlocal pending_reset_prompt
+            nonlocal pending_reset_prompt, initial_guidance_injected
 
             async def process_pending_instructions():
                 while pending_instructions:
