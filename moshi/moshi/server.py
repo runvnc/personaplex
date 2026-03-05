@@ -218,6 +218,7 @@ class ServerState:
         pending_reset_prompt = None
         connection_started_at = time.time()
         initial_guidance_injected = False
+        buffered_user_codes = []  # user audio frames buffered during wait period
 
         async def _inject_initial_guidance(reason: str, user_started: bool):
             # Helper: step with a text token paired with real user audio codes.
@@ -312,7 +313,6 @@ class ServerState:
             user_has_started_speaking = False
             user_has_finished_speaking = not wait_for_user
             silence_frames = 0
-            buffered_user_codes = []  # stores encoded user audio frames during wait period
             nonlocal pending_reset_prompt, initial_guidance_injected
 
             async def process_pending_instructions():
