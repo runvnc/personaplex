@@ -308,7 +308,7 @@ class ServerState:
                         elapsed_ms = int((time.time() - connection_started_at) * 1000)
 
                         # Optional timer-based unlock bypasses VAD when desired.
-                        if min_wait_ms > 0 and elapsed_ms >= min_wait_ms:
+                        if (not wait_for_user) and min_wait_ms > 0 and elapsed_ms >= min_wait_ms:
                             clog.log("info", f"Timer unlock reached ({elapsed_ms}ms >= {min_wait_ms}ms). Agent will now respond.")
                             user_has_finished_speaking = True
                             if not initial_guidance_injected:
