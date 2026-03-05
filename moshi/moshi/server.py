@@ -318,7 +318,8 @@ class ServerState:
         async def opus_loop():
             all_pcm_data = None
             user_has_started_speaking = False
-            user_has_finished_speaking = not wait_for_user
+            # If min_wait_ms is set, always start locked regardless of wait_for_user
+            user_has_finished_speaking = (not wait_for_user) and (min_wait_ms == 0)
             silence_frames = 0
             nonlocal pending_reset_prompt, initial_guidance_injected
 
@@ -377,7 +378,7 @@ class ServerState:
                         elapsed_ms = int((time.time() - connection_started_at) * 1000)
 
                         # Optional timer-based unlock bypasses VAD when desired.
-                        if (not wait_for_user) and min_wait_ms > 0 and elapsed_ms >= min_wait_ms:
+                        if min_wait_ms > 0 and elapsed_ms >= min_wait_ms:
                             clog.log("info", f"Timer unlock reached ({elapsed_ms}ms >= {min_wait_ms}ms). Agent will now respond.")
                             user_has_finished_speaking = True
                             if not initial_guidance_injected:
