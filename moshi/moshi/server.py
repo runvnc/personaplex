@@ -232,20 +232,25 @@ class ServerState:
                 _greeting_codes = self.simulated_greeting_audio_codes or buffered_user_codes or None
                 if _greeting_codes and is_user_stream:
                     # Pair text token with real audio frame from the greeting wav
-                    user_code = _greeting_codes[code_idx[0] % len(_greeting_codes)]
+                    frame_idx = code_idx[0] % len(_greeting_codes)
+                    user_code = _greeting_codes[frame_idx]
                     code_idx[0] += 1
+                    source = "greeting_wav" if self.simulated_greeting_audio_codes else "buffered_user"
+                    clog.log("info", f"[inject] tok={tok} frame={frame_idx}/{len(_greeting_codes)} source={source} user_code_shape={user_code.shape}")
                     tokens = self.lm_gen.step(
                         input_tokens=user_code,
                         moshi_tokens=self.lm_gen._encode_zero_frame(),
                         text_token=torch.tensor([tok], device=self.device),
                     )
                 else:
+                    clog.log("info", f"[inject] tok={tok} source=sine (no audio codes available)")
                     tokens = self.lm_gen.step(
                         input_tokens=self.lm_gen._encode_sine_frame(),
                         moshi_tokens=self.lm_gen._encode_zero_frame(),
                         text_token=torch.tensor([tok], device=self.device),
                     )
                 if tokens is None:
+                    clog.log("warning", "[inject] lm_gen.step returned None")
                     return
                 # Decode to keep mimi state in sync but do not send to caller.
                 _ = self.mimi.decode(tokens[:, 1:9])
