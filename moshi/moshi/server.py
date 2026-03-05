@@ -252,9 +252,9 @@ class ServerState:
                 if tokens is None:
                     clog.log("warning", "[inject] lm_gen.step returned None")
                     return
-                # Decode to keep mimi state in sync but do not send to caller.
-                _ = self.mimi.decode(tokens[:, 1:9])
-                _ = self.other_mimi.decode(tokens[:, 1:9])
+                # Do NOT call mimi.decode() here - mimi streaming state is shared
+                # with the main audio loop and calling decode during injection
+                # would corrupt the decoder state for real audio output.
 
             if simulated_user_greeting and user_started:
                 # Encode just the short phrase for audio-paired injection so text
