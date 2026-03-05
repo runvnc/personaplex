@@ -201,7 +201,13 @@ class ServerState:
                 clog.log("info", f"Auto-injecting outbound reminder ({reason}): {outbound_reminder}")
                 tokens = self.text_tokenizer.encode(wrap_with_system_tags(outbound_reminder))
                 pending_instructions.extend(tokens)
-            await process_pending_instructions()
+            while pending_instructions:
+                    tok = pending_instructions.pop(0)
+                    self.lm_gen.step(
+                        self.lm_gen._encode_zero_frame(),
+                        self.lm_gen._encode_zero_frame(),
+                        text_token=torch.tensor([tok], device=self.device),
+                    )
 
         async def recv_loop():
             nonlocal close, pending_reset_prompt
