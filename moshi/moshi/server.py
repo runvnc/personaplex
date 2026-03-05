@@ -383,8 +383,6 @@ class ServerState:
                             if not initial_guidance_injected:
                                 await _inject_initial_guidance("timer_unlock", user_has_started_speaking)
                                 initial_guidance_injected = True
-                            # Skip this chunk after injection
-                            continue
                         else:
                             rms = np.sqrt(np.mean(chunk**2))
                             if rms > vad_threshold:
@@ -399,9 +397,6 @@ class ServerState:
                                     if not initial_guidance_injected:
                                         await _inject_initial_guidance("vad_unlock", user_has_started_speaking)
                                         initial_guidance_injected = True
-                                    # Skip this chunk - injection already advanced lm_gen state.
-                                    # Next chunk will be processed cleanly in free-generation mode.
-                                    continue
 
                     chunk = torch.from_numpy(chunk)
                     chunk = chunk.to(device=self.device)[None, None]
