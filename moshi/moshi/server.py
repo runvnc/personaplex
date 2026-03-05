@@ -98,7 +98,8 @@ class ServerState:
     def __init__(self, mimi: MimiModel, other_mimi: MimiModel, text_tokenizer: sentencepiece.SentencePieceProcessor,
                  lm: LMModel, device: str | torch.device, voice_prompt_dir: str | None = None,
                  save_voice_prompt_embeddings: bool = False, wait_for_user: bool = False,
-                 initial_agent_utterance: str = "", min_wait_ms: int = 0, simulated_user_greeting: str = ""):
+                 initial_agent_utterance: str = "", min_wait_ms: int = 0, simulated_user_greeting: str = "",
+                 simulated_greeting_audio_path: str | None = None):
         self.mimi = mimi
         self.other_mimi = other_mimi
         self.text_tokenizer = text_tokenizer
@@ -108,6 +109,8 @@ class ServerState:
         self.initial_agent_utterance = initial_agent_utterance
         self.min_wait_ms = min_wait_ms
         self.simulated_user_greeting = simulated_user_greeting
+        self.simulated_greeting_audio_codes = None  # pre-encoded frames, set after mimi is ready
+        self._simulated_greeting_audio_path = simulated_greeting_audio_path
         self.frame_size = int(self.mimi.sample_rate / self.mimi.frame_rate)
         self.lm_gen = LMGen(lm,
                             audio_silence_frame_cnt=int(0.5 * self.mimi.frame_rate),
@@ -136,6 +139,35 @@ class ServerState:
 
         if self.device.type == 'cuda':
             torch.cuda.synchronize()
+        # Pre-encode simulated greeting audio after warmup so mimi state is ready
+        if self._simulated_greeting_audio_path:
+            self._preload_simulated_greeting_audio()
+
+    def _preload_simulated_greeting_audio(self):
+        import sphn
+        import os
+        path = self._simulated_greeting_audio_path
+        if not os.path.exists(path):
+            logger.warning(f"simulated greeting audio not found: {path}")
+            return
+        pcm, sr = sphn.read(path)
+        pcm = sphn.resample(pcm, src_sample_rate=sr, dst_sample_rate=self.mimi.sample_rate)
+        if pcm.ndim == 1:
+            pcm = pcm[None, :]
+        # Encode all frames
+        codes_list = []
+        pos = 0
+        while pos + self.frame_size <= pcm.shape[-1]:
+            chunk = torch.from_numpy(pcm[:, pos:pos + self.frame_size]).float().to(self.device).unsqueeze(0)
+            codes = self.mimi.encode(chunk)  # shape [1, 8, F]
+            for c in range(codes.shape[-1]):
+                codes_list.append(codes[:, :, c:c+1].clone())
+            pos += self.frame_size
+        self.simulated_greeting_audio_codes = codes_list
+        logger.info(f"Pre-encoded simulated greeting audio: {len(codes_list)} frames from {path}")
+        # Reset mimi streaming state so it is clean for actual conversations
+        self.mimi.reset_streaming()
+        self.other_mimi.reset_streaming()
 
 
     async def handle_chat(self, request):
@@ -192,12 +224,14 @@ class ServerState:
             # We cycle through buffered_user_codes so the model gets real audio
             # context alongside the injected text, preventing it from trying to
             # re-speak the injected phrase as its own audio output.
-            code_idx = [0]  # mutable counter for cycling through buffered codes
+            # Use pre-encoded greeting audio codes if available, else fall back to buffered user codes
+            greeting_codes = self.simulated_greeting_audio_codes or buffered_user_codes or None
+            code_idx = [0]  # mutable counter for cycling through codes
 
             async def _step_and_send(tok, is_user_stream: bool):
-                if buffered_user_codes and is_user_stream:
-                    # Use real buffered user audio, cycling if needed
-                    user_code = buffered_user_codes[code_idx[0] % len(buffered_user_codes)]
+                if greeting_codes and is_user_stream:
+                    # Pair text token with real audio frame from the greeting wav
+                    user_code = greeting_codes[code_idx[0] % len(greeting_codes)]
                     code_idx[0] += 1
                     tokens = self.lm_gen.step(
                         input_tokens=user_code,
@@ -546,6 +580,7 @@ def main():
     parser.add_argument("--initial-agent-utterance", type=str, default="", help="Text guidance injected at first agent turn after unlock")
     parser.add_argument("--min-wait-ms", type=int, default=0, help="If >0, unlock first agent turn after this many ms even without VAD completion")
     parser.add_argument("--simulated-user-greeting", type=str, default="", help="Inject a synthetic first user greeting context before first agent response")
+    parser.add_argument("--simulated-greeting-audio", type=str, default=None, help="Path to wav file to encode as audio tokens for the simulated user greeting")
 
     args = parser.parse_args()
     args.voice_prompt_dir = _get_voice_prompt_dir(
@@ -627,6 +662,7 @@ def main():
         initial_agent_utterance=args.initial_agent_utterance,
         min_wait_ms=args.min_wait_ms,
         simulated_user_greeting=args.simulated_user_greeting,
+        simulated_greeting_audio_path=args.simulated_greeting_audio,
     )
     logger.info("warming up the model")
     state.warmup()
