@@ -267,13 +267,6 @@ class ServerState:
                 clog.log("info", f"[inject] phrase token count={len(phrase_tokens)} audio_frames={n_audio}")
                 for tok in phrase_tokens:
                     await _step_and_send(tok, is_user_stream=True)
-                # Pad remaining audio frames with silence text token so text/audio streams stay aligned
-                remaining = n_audio - len(phrase_tokens)
-                if remaining > 0:
-                    clog.log("info", f"[inject] padding {remaining} frames with silence text token")
-                    silence_tok = self.lm_gen.zero_text_code.item() if hasattr(self.lm_gen.zero_text_code, 'item') else int(self.lm_gen.zero_text_code)
-                    for i in range(remaining):
-                        await _step_and_send(silence_tok, is_user_stream=True)
             if initial_agent_utterance:
                 clog.log("info", f"Auto-injecting initial agent utterance ({reason}): {initial_agent_utterance}")
                 tokens = self.text_tokenizer.encode(wrap_with_system_tags(initial_agent_utterance))
