@@ -278,7 +278,13 @@ class ServerState:
                     clog.log("info", "Soft reset complete.")
                     continue
 
-                await process_pending_instructions()
+                while pending_instructions:
+                    tok = pending_instructions.pop(0)
+                    self.lm_gen.step(
+                        self.lm_gen._encode_zero_frame(),
+                        self.lm_gen._encode_zero_frame(),
+                        text_token=torch.tensor([tok], device=self.device),
+                    )
 
                 pcm = opus_reader.read_pcm()
                 if pcm.shape[-1] == 0:
