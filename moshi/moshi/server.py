@@ -99,12 +99,13 @@ class ServerState:
                  lm: LMModel, device: str | torch.device, voice_prompt_dir: str | None = None,
                  save_voice_prompt_embeddings: bool = False, wait_for_user: bool = False,
                  initial_agent_utterance: str = "", min_wait_ms: int = 0, simulated_user_greeting: str = "",
-                 simulated_greeting_audio_path: str | None = None):
+                 simulated_greeting_audio_path: str | None = None, default_voice_prompt: str | None = None):
         self.mimi = mimi
         self.other_mimi = other_mimi
         self.text_tokenizer = text_tokenizer
         self.device = device
         self.voice_prompt_dir = voice_prompt_dir
+        self.default_voice_prompt = default_voice_prompt
         self.wait_for_user = wait_for_user
         self.initial_agent_utterance = initial_agent_utterance
         self.min_wait_ms = min_wait_ms
@@ -187,15 +188,19 @@ class ServerState:
         requested_voice_prompt_path = None
         voice_prompt_path = None
         if self.voice_prompt_dir is not None:
-            voice_prompt_filename = request.query["voice_prompt"]
+            voice_prompt_filename = request.query.get("voice_prompt", "")
             requested_voice_prompt_path = None
-            if voice_prompt_filename is not None:
+            if voice_prompt_filename:
                 requested_voice_prompt_path = os.path.join(self.voice_prompt_dir, voice_prompt_filename)
             # If the voice prompt file does not exist, find a valid (s0) voiceprompt file in the directory
             if requested_voice_prompt_path is None or not os.path.exists(requested_voice_prompt_path):
-                raise FileNotFoundError(
-                    f"Requested voice prompt '{voice_prompt_filename}' not found in '{self.voice_prompt_dir}'"
-                )
+                if self.default_voice_prompt and os.path.exists(self.default_voice_prompt):
+                    clog.log("info", f"Falling back to default voice prompt: {self.default_voice_prompt}")
+                    voice_prompt_path = self.default_voice_prompt
+                else:
+                    raise FileNotFoundError(
+                        f"Requested voice prompt '{voice_prompt_filename}' not found in '{self.voice_prompt_dir}' and no valid default set"
+                    )
             else:
                 voice_prompt_path = requested_voice_prompt_path
                 
@@ -620,6 +625,7 @@ def main():
     parser.add_argument("--min-wait-ms", type=int, default=0, help="If >0, unlock first agent turn after this many ms even without VAD completion")
     parser.add_argument("--simulated-user-greeting", type=str, default="", help="Inject a synthetic first user greeting context before first agent response")
     parser.add_argument("--simulated-greeting-audio", type=str, default=None, help="Path to wav file to encode as audio tokens for the simulated user greeting")
+    parser.add_argument("--voice-prompt", type=str, default=None, help="Path to a default voice prompt file used when the connection does not specify one")
 
     args = parser.parse_args()
     args.voice_prompt_dir = _get_voice_prompt_dir(
@@ -702,6 +708,7 @@ def main():
         min_wait_ms=args.min_wait_ms,
         simulated_user_greeting=args.simulated_user_greeting,
         simulated_greeting_audio_path=args.simulated_greeting_audio,
+        default_voice_prompt=args.voice_prompt,
     )
     logger.info("warming up the model")
     state.warmup()
