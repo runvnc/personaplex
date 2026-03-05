@@ -359,10 +359,13 @@ class ServerState:
                     _ = self.other_mimi.encode(chunk)
                     for c in range(codes.shape[-1]):
                         if not user_has_finished_speaking:
+                            # Feed silence to the model during the wait period so the
+                            # model does not hear the real user audio yet. After VAD
+                            # unlock we inject the simulated greeting text instead.
                             tokens = self.lm_gen.step(
-                                codes[:, :, c: c + 1],
+                                input_tokens=self.lm_gen._encode_sine_frame(),
                                 moshi_tokens=self.lm_gen._encode_zero_frame(),
-                                text_token=self.lm_gen.zero_text_code
+                                text_token=self.lm_gen.zero_text_code,
                             )
                         else:
                             tokens = self.lm_gen.step(codes[:, :, c: c + 1])
