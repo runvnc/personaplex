@@ -219,6 +219,7 @@ class ServerState:
         connection_started_at = time.time()
         initial_guidance_injected = False
         buffered_user_codes = []  # user audio frames buffered during wait period
+        voice_prompt_moshi_codes = []  # voice prompt frames for moshi_tokens during injection
 
         async def _inject_initial_guidance(reason: str, user_started: bool):
             # Helper: step with a text token paired with real user audio codes.
@@ -240,6 +241,18 @@ class ServerState:
                     tokens = self.lm_gen.step(
                         input_tokens=user_code,
                         moshi_tokens=self.lm_gen._encode_zero_frame(),
+                        text_token=torch.tensor([tok], device=self.device),
+                    )
+                elif not is_user_stream and voice_prompt_moshi_codes:
+                    # Use voice prompt audio codes as moshi_tokens so model stays
+                    # conditioned on the cloned voice during agent utterance injection.
+                    frame_idx = code_idx[0] % len(voice_prompt_moshi_codes)
+                    moshi_code = voice_prompt_moshi_codes[frame_idx]
+                    code_idx[0] += 1
+                    clog.log("info", f"[inject] tok={tok} frame={frame_idx}/{len(voice_prompt_moshi_codes)} source=voice_prompt_moshi")
+                    tokens = self.lm_gen.step(
+                        input_tokens=self.lm_gen._encode_sine_frame(),
+                        moshi_tokens=moshi_code,
                         text_token=torch.tensor([tok], device=self.device),
                     )
                 else:
@@ -473,6 +486,24 @@ class ServerState:
             await self.lm_gen.step_system_prompts_async(self.mimi, is_alive=is_alive)
             self.mimi.reset_streaming()
             clog.log("info", "done with system prompts")
+
+            # Pre-encode voice prompt audio as moshi frame codes for injection.
+            # Done after mimi is reset so other_mimi encoding is isolated.
+            if self.lm_gen.voice_prompt_audio is not None:
+                self.other_mimi.reset_streaming()
+                vp_pcm = self.lm_gen.voice_prompt_audio  # shape (1, T) numpy
+                pos = 0
+                while pos + self.frame_size <= vp_pcm.shape[-1]:
+                    chunk = torch.from_numpy(
+                        vp_pcm[:, pos:pos + self.frame_size]
+                    ).float().to(self.device).unsqueeze(0)
+                    codes = self.other_mimi.encode(chunk)  # [1, 8, F]
+                    for c in range(codes.shape[-1]):
+                        voice_prompt_moshi_codes.append(codes[:, :, c:c+1].clone())
+                    pos += self.frame_size
+                self.other_mimi.reset_streaming()
+                clog.log("info", f"Pre-encoded {len(voice_prompt_moshi_codes)} voice prompt moshi frames for injection")
+
             # Send the handshake.
             if await is_alive():
                 await ws.send_bytes(b"\x00")
