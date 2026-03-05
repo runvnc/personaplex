@@ -224,14 +224,14 @@ class ServerState:
             # We cycle through buffered_user_codes so the model gets real audio
             # context alongside the injected text, preventing it from trying to
             # re-speak the injected phrase as its own audio output.
-            # Use pre-encoded greeting audio codes if available, else fall back to buffered user codes
-            greeting_codes = self.simulated_greeting_audio_codes or buffered_user_codes or None
             code_idx = [0]  # mutable counter for cycling through codes
 
             async def _step_and_send(tok, is_user_stream: bool):
-                if greeting_codes and is_user_stream:
+                # Resolve greeting codes lazily so opus_loop's buffered_user_codes is in scope
+                _greeting_codes = self.simulated_greeting_audio_codes or buffered_user_codes or None
+                if _greeting_codes and is_user_stream:
                     # Pair text token with real audio frame from the greeting wav
-                    user_code = greeting_codes[code_idx[0] % len(greeting_codes)]
+                    user_code = _greeting_codes[code_idx[0] % len(_greeting_codes)]
                     code_idx[0] += 1
                     tokens = self.lm_gen.step(
                         input_tokens=user_code,
