@@ -113,6 +113,7 @@ class ServerState:
         self.simulated_greeting_audio_codes = None  # pre-encoded frames, set after mimi is ready
         self._simulated_greeting_audio_path = simulated_greeting_audio_path
         self.frame_size = int(self.mimi.sample_rate / self.mimi.frame_rate)
+        self.ambient_noise_frames = []
         self.lm_gen = LMGen(lm,
                             audio_silence_frame_cnt=int(0.5 * self.mimi.frame_rate),
                             sample_rate=self.mimi.sample_rate,
@@ -140,6 +141,7 @@ class ServerState:
 
         if self.device.type == 'cuda':
             torch.cuda.synchronize()
+        self._precompute_ambient_noise_frames()
         # Pre-encode simulated greeting audio after warmup so mimi state is ready
         if self._simulated_greeting_audio_path:
             self._preload_simulated_greeting_audio()
@@ -170,6 +172,31 @@ class ServerState:
         self.mimi.reset_streaming()
         self.other_mimi.reset_streaming()
 
+
+    def _precompute_ambient_noise_frames(self, num_frames: int = 64):
+        """Pre-encode soft ambient noise (gentle air/room tone) for use during wait_for_user.
+
+        Uses pink-ish noise at very low amplitude (~0.003 peak) so the model context
+        during the wait period looks like quiet room tone rather than hard digital silence.
+        """
+        rng = np.random.default_rng(seed=99991)
+        frames = []
+        self.mimi.reset_streaming()
+        for _ in range(num_frames):
+            white = rng.standard_normal(self.frame_size).astype(np.float32)
+            pink = np.cumsum(white)
+            pink -= pink.mean()
+            peak = float(np.abs(pink).max())
+            if peak > 0:
+                pink /= peak
+            pink *= 0.003
+            chunk = torch.from_numpy(pink).to(self.device)[None, None]
+            codes = self.mimi.encode(chunk)
+            for c in range(codes.shape[-1]):
+                frames.append(codes[:, :, c:c+1].clone())
+        self.ambient_noise_frames = frames
+        self.mimi.reset_streaming()
+        logger.info(f"Pre-computed {len(frames)} ambient noise frames for wait_for_user")
 
     async def handle_chat(self, request):
         ws = web.WebSocketResponse()
@@ -336,6 +363,7 @@ class ServerState:
         async def opus_loop():
             all_pcm_data = None
             user_has_started_speaking = False
+            ambient_frame_idx = 0
             # If min_wait_ms is set, always start locked regardless of wait_for_user
             user_has_finished_speaking = (not wait_for_user) and (min_wait_ms == 0)
             silence_frames = 0
@@ -426,9 +454,14 @@ class ServerState:
                             # Buffer the user audio codes so we can replay them
                             # alongside injected text tokens after VAD unlock.
                             buffered_user_codes.append(codes[:, :, c: c + 1].clone())
+                            if self.ambient_noise_frames:
+                                ambient_tok = self.ambient_noise_frames[ambient_frame_idx % len(self.ambient_noise_frames)]
+                                ambient_frame_idx += 1
+                            else:
+                                ambient_tok = self.lm_gen._encode_zero_frame()
                             tokens = self.lm_gen.step(
                                 codes[:, :, c: c + 1],
-                                moshi_tokens=self.lm_gen._encode_zero_frame(),
+                                moshi_tokens=ambient_tok,
                                 text_token=self.lm_gen.zero_text_code
                             )
                         else:
